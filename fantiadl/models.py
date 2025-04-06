@@ -344,7 +344,7 @@ class FantiaDownloader:
                 post_id = link.lstrip(POST_RELATIVE_URL)
                 date_string = post.select_one(".post-date .mr-5").text if post.select_one(".post-date .mr-5") else post.select_one(".post-date").text
                 parsed_date = dt.strptime(date_string, "%Y-%m-%d %H:%M")
-                if not self.month_limit or (parsed_date.year == self.month_limit.year and parsed_date.month == self.month_limit.month):
+                if not self.month_limit or (parsed_date.year == self.month_limit.year and parsed_date.month >= self.month_limit.month) or (parsed_date.year > self.month_limit.year):
                     post_found = True
                     new_post_ids.append(post_id)
             all_posts += new_post_ids
@@ -420,7 +420,11 @@ class FantiaDownloader:
 
         if os.path.exists(filepath):
             os.remove(filepath)
-        os.rename(incomplete_filename, filepath)
+
+        try:
+            os.rename(incomplete_filename, filepath)
+        except FileExistsError:
+            self.output("!!! Duplicated file name, left with server filename !!! \n")
 
         self.db.insert_url(url_path)
 
@@ -438,7 +442,7 @@ class FantiaDownloader:
 
     def download_file(self, download_url, filename, post_directory):
         """Download a file to the post's directory."""
-        self.perform_download(download_url, filename, use_server_filename=True) # Force serve filenames to prevent duplicate collision
+        self.perform_download(download_url, filename, use_server_filename=False) # Force serve filenames to prevent duplicate collision
 
     def download_post_content(self, post_json, post_directory, post_title):
         """Parse the post's content to determine whether to save the content as a photo gallery or file."""
@@ -462,8 +466,22 @@ class FantiaDownloader:
                     photo_url = photo["url"]["original"]
                     self.download_photo(photo_url, photo_counter, gallery_directory)
                     photo_counter += 1
-            elif post_json["category"] == "file":
-                filename = os.path.join(post_directory, post_json["filename"])
+            elif post_json.get("category") == "file":
+                if post_json["title"] is not None:
+                    title = post_json["title"].replace("/", "")
+                    title = title.replace("*", "")
+                    title = title.replace("?", "")
+                    title = title.replace("\\", "")
+                    title = title.replace("<", "")
+                    title = title.replace(">", "")
+                    title = title.replace("|", "")
+                    title = title.replace(":", "")
+                    title = title.replace("\"", "")
+                    filename = os.path.join(post_directory, title)
+                    file_type = "." + post_json["content_type"].split("/")[1]
+                    filename = filename + file_type
+                else:
+                    filename = os.path.join(post_directory, post_json["filename"])
                 download_url = urljoin(POSTS_URL, post_json["download_uri"])
                 self.download_file(download_url, filename, post_directory)
             elif post_json["category"] == "embed":
@@ -542,7 +560,7 @@ class FantiaDownloader:
         if self.db.conn and not db_post:
             self.db.insert_post(post_id, post_title, post_json["fanclub"]["id"], post_posted_at, post_converted_at)
 
-        post_directory_title = sanitize_for_path(str(post_id))
+        post_directory_title = sanitize_for_path(str(post_title))
 
         post_directory = os.path.join(self.directory, sanitize_for_path(post_creator), post_directory_title)
         os.makedirs(post_directory, exist_ok=True)
